@@ -1,0 +1,242 @@
+//app.js
+//1复制服务器端模块
+//2引入第三方模块
+const express=require('express');
+const mysql = require('mysql');
+//引入express-session
+const session = require ("express-session");
+//3.创建mysql连接池 不加效率太低
+  var pool = mysql.createPool({
+  host: '127.0.0.1',
+  user: 'root',
+  password: '',
+  database: 'xz',
+  connectionLimit: 10 
+});
+//把创建好的连接池导出 如果是单独建立一个pooljs文件 不需要导出
+//module.exports = pool;
+//4.创建express对象 绑定监听端口 3000 使用跨域组件
+var server = express();
+server.listen(3000);
+//4.1配置session
+server.use(session({
+  secret:"128字符串",  //配置秘钥
+  resave:false,       //每次请求是否更新数据
+  saveUninitialized:true //保存初始化数据
+}))
+//4.5加入静态目录 保存项目资源 所有资源都是放到服务器端！
+server.use(express.static('public'));
+
+//引入cors组件 辅助跨域
+const cors=require("cors");
+server.use(cors({
+  origin:['http://localhost:8081',"http://127.0.0.1:8081"],
+  credentials:true //允许前端吧cookie打进来
+}))
+//5用户注册
+server.get("/resgiter",(req,res)=>{
+   var $name = req.query.uname;   
+   var $pwd = req.query.upass;
+   console.log($name,$pwd);
+  
+   pool.query("select * from xz_login where name=?",[$name],(err,result)=>{
+      if(err)throw err;
+      if(result.length>0){
+          res.send({code:-1,msg:"用户名字重复"})
+          return;
+      }else{
+        var url="insert into xz_login(name,pwd) values(?,?)";
+        pool.query(url,[$name,$pwd],(err,result)=>{
+            if(err){throw err;}   
+		    	  console.log(result);
+		    	  //增删改的话 返回对象result result里面的属性affectedRows长度大于0 说明成功
+            if(result.affectedRows>0){
+              //如果成功将用户数据保存到session里面 前面已经引用了
+		    	   /* var uid=result[0].id;
+              console.log(uid);
+              req.session.uid = uid ;*/
+              pool.query("select id from xz_login where name=? and pwd=?",[$name,$pwd],(err,result)=>{
+                if(err)throw err;
+                if(result.length==0){
+                    res.send({code:-1,msg:"注册失败"})
+                    return;
+                }else{
+                    //如果成功将用户数据保存到session里面 前面已经引用了
+                    var uid=result[0].id;
+                    console.log(uid);
+                    req.session.uid = uid ;
+                    console.log(session);
+                    res.send({code:1,msg:"登录成功"})
+                }
+              })      
+             
+		        }
+        });   
+      }
+   })
+});
+
+//5处理用户登录请求
+server.get("/login",(req,res)=>{
+  var $name = req.query.uname;   
+  var $pwd = req.query.upass;
+  pool.query("select id from xz_login where name=? and pwd=?",[$name,$pwd],(err,result)=>{
+    if(err)throw err;
+    if(result.length==0){
+        res.send({code:-1,msg:"登录失败"})
+    }else{
+        //如果成功将用户数据保存到session里面 前面已经引用了
+        var uid=result[0].id;
+        console.log(uid);
+        req.session.uid = uid ;
+        res.send({code:1,msg:"登录成功"})
+    }
+  })
+})
+
+//6.商品列表
+//功能二:商品列表 
+server.get("/product",(req,res)=>{
+  //1.获取参数 pno ps
+  var pno = req.query.pno;
+  var ps = req.query.pageSize;
+  //2.如果为零默认给个值+以防数据不是整数
+  if(!pno){pno=1}
+  if(!ps){ps=4}
+  pno = parseInt(pno);
+  ps = parseInt(ps);
+  //3.计算起始行
+  var offset = (pno-1)*ps;
+  //4.创建发送对象
+  var obj={code:1,msg:"查询成功"};
+  //第一次sql查询
+  var sql = "SELECT lid,title,price,lname FROM xz_laptop LIMIT ?,?";
+  pool.query(sql,[offset,ps],(err,result)=>{
+    if(err)throw err;
+    console.log(result)  
+    //把数据结果放到对象里面
+    obj.data=result;  
+        //第二次sql查询商品的总数量
+         var sql ="SELECT count(lid) AS c FROM xz_laptop";
+         pool.query(sql,(err,result)=>{
+           if(err)throw err;
+           console.log(result);
+           //根据数量计算页数
+           var pc = Math.ceil(result[0].c/ps);
+           //将页数放到对象里面 
+           obj.pageCount = pc; 
+             console.log(obj)   
+             res.send(obj)
+         });
+  })
+});
+
+//7.接受用户选择的商品数据
+server.get("/productdata",(req,res)=>{
+  //console.log(req.query);
+    var id = req.query.lid;     //商品id
+    var count = req.query.count; //商品数量
+    var uid = req.session.uid ;    //用户id
+    var price = req.query.price;    //商品价格
+    var lname = req.query.name;    //商品价格
+    console.log(id,count,uid,price,lname);
+    
+    //res.send("后台接受成功");
+    if(id&&count&&uid&&price&&lname){
+      var  sql = "insert into xz_cart(id,lname,price,count,uid) values(?,?,?,?,?)";    
+      pool.query(sql,[id,lname,price,count,uid],(err,result)=>{
+          if(err){throw err;}   
+          console.log(result);
+          //增删改的话 返回对象result result里面的属性affectedRows长度大于0 说明成功
+          if(result.affectedRows>0){
+            //如果成功将用户数据保存到session里面 前面已经引用了
+           /* var uid=result[0].id;
+            console.log(uid);
+            req.session.uid = uid ;*/
+            res.send("传输成功")
+          
+          }
+      }); 
+    }
+});
+
+
+
+
+//功能三:学子商城首页轮播图
+//1:将轮播保存服务器端 
+//   public/img/banner1.png
+//2:接收客户端发送请求 /imglist
+/*server.get("/imglist",(req,res)=>{
+  //3:创建数据发送客户端
+  var rows = [
+    {id:1,img_url:"http://127.0.0.1:3000/img/banner1.png"},
+    {id:2,img_url:"http://127.0.0.1:3000/img/banner2.png"},
+    {id:3,img_url:"http://127.0.0.1:3000/img/banner3.png"},
+    {id:4,img_url:"http://127.0.0.1:3000/img/banner4.png"},
+];
+     res.send({code:1,data:rows})
+})*/
+
+
+//功能五 查询购物车列表 1
+server.get("/cart",(req,res)=>{
+  //获取session uid 如果没有停止程序 
+  var uid = req.session.uid;
+  console.log(uid);
+  if(!uid){
+    res.send({code:-1,msg:"请登录",data:[]})
+    return;
+  }
+  //1:参数 uid 当前登录用户编号
+  //var uid = 2;
+  //2:sql
+  var sql = "SELECT id,lname,price,count";
+  sql+=" FROM xz_cart";
+  sql+=" WHERE uid = ?"
+  //3:json
+  pool.query(sql,[uid],(err,result)=>{
+     if(err)throw err;
+
+     res.send({code:1,data:result})
+  });
+});
+
+//功能六:删除购物车指定商品信息 172~188
+server.get("/del",(req,res)=>{
+  //1:参数
+  console.log(req);
+  var id = req.query.id;
+  //2:sql
+  var sql = "DELETE FROM xz_cart WHERE id=?";
+  pool.query(sql,[id],(err,result)=>{
+     if(err)throw err;
+     if(result.affectedRows==0){
+       res.send({code:-1,msg:"删除失败"});
+     }else{
+       res.send({code:1,msg:"删除成功"});
+     }
+  });
+  //3:json
+});
+
+//功能七:删除购物车多个商品
+server.get("/delselected",(req,res)=>{
+  //1.参数
+  var ids=req.query.ids;
+  console.log(ids);
+  console.log(typeof(ids));
+  //2.sql
+  var sql="DELETE FROM xz_cart WHERE id IN ("+ids+")";
+  pool.query(sql,(err,result)=>{
+      if(err) throw err;
+      if(result.affectedRows==0){
+        res.send({code:-1,msg:"删除失败"});
+      }else{
+        res.send({code:1,msg:"删除成功"});
+      }
+  })
+  //3.json
+})
+
+
